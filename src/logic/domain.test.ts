@@ -182,18 +182,45 @@ describe("Factory Method and tasks", () => {
 
 describe("observations and application actions", () => {
   it("routes dashboard shortcuts to validated task filters", () => {
-    expect(parseRoute("#/tasks?status=completed&priority=high&due=today")).toMatchObject({ view: "tasks", taskFilters: { status: "completed", priority: "high", due: "today" } });
-    expect(parseRoute("#/tasks?status=bad&priority=bad&due=bad").taskFilters).toEqual({ status: "all", priority: "all", due: "all" });
-    expect(parseRoute("#/patients/p-101")).toMatchObject({ view: "patients", patientId: "p-101" });
+    expect(
+      parseRoute("#/tasks?status=completed&priority=high&due=today"),
+    ).toMatchObject({
+      view: "tasks",
+      taskFilters: { status: "completed", priority: "high", due: "today" },
+    });
+    expect(
+      parseRoute("#/tasks?status=bad&priority=bad&due=bad").taskFilters,
+    ).toEqual({ status: "all", priority: "all", due: "all" });
+    expect(parseRoute("#/patients/p-101")).toMatchObject({
+      view: "patients",
+      patientId: "p-101",
+    });
   });
   it("filters due-today and overdue work without including completed records", () => {
     const now = new Date("2026-11-16T12:00:00");
-    const due = createTask({ ...taskInput, dueAt: new Date("2026-11-16T10:00:00").toISOString(), priority: "high" });
-    const completed = toggleTaskStatus(createTask({ ...taskInput, dueAt: due.dueAt }));
-    const filters = { query: "", status: "all" as const, category: "all" as const, sort: "priority" as const, due: "today" as const, priority: "high" as const };
+    const due = createTask({
+      ...taskInput,
+      dueAt: new Date("2026-11-16T10:00:00").toISOString(),
+      priority: "high",
+    });
+    const completed = toggleTaskStatus(
+      createTask({ ...taskInput, dueAt: due.dueAt }),
+    );
+    const filters = {
+      query: "",
+      status: "all" as const,
+      category: "all" as const,
+      sort: "priority" as const,
+      due: "today" as const,
+      priority: "high" as const,
+    };
     expect(filterTasks([due, completed], filters, now)).toEqual([due]);
-    expect(filterTasks([due, completed], { ...filters, due: "overdue" }, now)).toEqual([due]);
-    expect(filterTasks([due], { ...filters, priority: "low" }, now)).toEqual([]);
+    expect(
+      filterTasks([due, completed], { ...filters, due: "overdue" }, now),
+    ).toEqual([due]);
+    expect(filterTasks([due], { ...filters, priority: "low" }, now)).toEqual(
+      [],
+    );
   });
   it.each([NaN, Infinity, -1, 61])(
     "rejects invalid temperatures %s",

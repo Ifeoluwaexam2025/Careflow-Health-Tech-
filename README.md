@@ -91,23 +91,147 @@ e2e/            Real-browser workflow, reliability and accessibility tests
 docs/           Screenshots, learning guide and demonstration script
 ```
 
-## Architecture and Factory Method
+## Engineering decisions and why we chose them
 
-`CareFlowData` contains four normalized collections: patients, tasks, observations
-and activity. Tasks and observations refer to a patient by stable `patientId`.
-Counts and filtered lists are derived from these collections, not saved separately.
+| Decision                                  | Reason for this project                                                                                                                               | Trade-off / alternative                                                                                                              |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| React + strict TypeScript                 | Reusable views and explicit contracts make patient/task relationships and form inputs easier to understand and change.                                | Types catch development mistakes; they do not validate JSON or prove runtime correctness.                                            |
+| Normalized collections linked by IDs      | One task model replaces the starter's nested checklist and separate created-task list. Editing, completion and counting now share the same records.   | Views must join records by `patientId`; nesting would simplify initial rendering but duplicate update paths.                         |
+| Derived counts and filters                | Dashboard numbers and filtered lists are calculated from actual records, so there are no separate counters to keep synchronized.                      | Queries rerun when rendering; suitable for this small demo, not optimized for very large datasets.                                   |
+| Small domain functions outside components | Validation, creation, editing and filtering can be tested without rendering React. Components concentrate on collecting input and presenting results. | More files, but each has a clear responsibility. Short local callbacks remain inline.                                                |
+| React state plus a custom hook            | `useCareFlow` coordinates one source of truth and persistence without introducing a state library.                                                    | Prop passing is explicit; Context or a store may become useful if the component tree grows.                                          |
+| Immutable updates                         | New objects/arrays preserve the previous state, making React updates and regression tests predictable.                                                | Copying collections is less efficient than mutation at large scales; clarity matters more here.                                      |
+| localStorage and one versioned envelope   | Small text records fit a synchronous standalone prototype. One write saves records and their activity together.                                       | Storage is browser/origin-specific, blocking and quota-limited. IndexedDB would suit larger datasets and asynchronous storage needs. |
+| Save before accepting state               | A failed save leaves the displayed records unchanged and the form open; success feedback follows a successful write.                                  | Users cannot continue unsaved editing through a storage failure; this avoids pretending changes are durable.                         |
+| Runtime guards and conservative migration | Parsed storage is untrusted `unknown`, even in a TypeScript app. Invalid records must not disappear during loading or migration.                      | Corrupt data blocks editing and needs explicit recovery instead of silently resetting the demo.                                      |
+| Native HTML dialogs                       | Built-in modal semantics and an inert background reduce the amount of custom accessibility code.                                                      | Focus wrapping/return still needs care, and native behavior must be checked in a real browser.                                       |
+| Hash navigation                           | Refreshable patient URLs and browser back/forward work without server routing or another runtime dependency.                                          | Less flexible than a router for nested routes, authorization and complex navigation.                                                 |
+| Separate observations and tasks           | A task is planned work; an observation is an entered fictional measurement with a time and value.                                                     | Recording a measurement does not automatically complete an Observation task; there is no hidden clinical workflow.                   |
+| Confirmed cascading patient deletion      | Associated tasks and observations cannot remain orphaned after their patient is removed.                                                              | Patient-specific history is also removed; the confirmation explains this and a workspace removal event remains.                      |
 
-A form submits an action to `useCareFlow`. `applyAction` invokes domain functions
-and constructs the next immutable dataset plus its activity event. Storage validates
-and saves that dataset before React accepts it. Failure leaves the displayed data
-unchanged and the form open with its input intact.
+### How a change moves through the application
 
-`TaskFactory` defines an abstract `createTask` method. `GeneralTaskFactory` and
-`ObservationTaskFactory` implement it; `selectTaskFactory` chooses the creator.
-Both delegate shared validation and object construction to `createTask`. The
-concrete factories currently differ only by category: this intentionally preserves
-the design-pattern learning exercise, although one simple function would suffice
-for today's behavior. Updating an existing task does not reconstruct its identity.
+```text
+Controlled form → typed action → useCareFlow → applyAction
+    → domain operation + actual activity event
+    → runtime validation → versioned localStorage write
+    → React state update → refreshed lists and derived counts
+```
+
+A controlled input stores its value in React state. The submitted `Action` is a
+TypeScript discriminated union: its `type` determines the fields that operation
+requires. `applyAction` constructs the next dataset without changing the old one.
+The hook saves first and accepts that dataset only after success. Ref-based form
+locking prevents rapid duplicate submissions before React has re-rendered.
+
+## Factory Method design pattern
+
+A **factory** is code responsible for constructing an object. **Factory Method**
+uses a shared creator abstraction whose creation method is implemented by subclasses.
+Consumers call that contract without needing to construct the concrete product themselves.
+
+| File                                                                   | Role                                                                                                    |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| [`TaskFactory.ts`](src/factories/TaskFactory.ts)                       | Abstract creator: requires `createTask(input): Task`; it cannot be instantiated directly in TypeScript. |
+| [`GeneralTaskFactory.ts`](src/factories/GeneralTaskFactory.ts)         | Concrete creator: creates a General task.                                                               |
+| [`ObservationTaskFactory.ts`](src/factories/ObservationTaskFactory.ts) | Concrete creator: creates an Observation task.                                                          |
+| [`selectTaskFactory.ts`](src/logic/selectTaskFactory.ts)               | Chooses a creator from the requested category and rejects unsupported categories.                       |
+| [`createTask.ts`](src/logic/createTask.ts)                             | Shared record construction: validates fields, trims text and supplies ID, timestamps and initial state. |
+| [`updateTask.ts`](src/logic/updateTask.ts)                             | Edits an existing record while preserving its identity and original creation/completion metadata.       |
+
+The creator contract and one implementation are small:
+
+```typescript
+export abstract class TaskFactory {
+  abstract createTask(input: CreateTaskInput): Task;
+}
+
+export class ObservationTaskFactory extends TaskFactory {
+  createTask(input: CreateTaskInput): Task {
+    return createTask(input, "observation");
+  }
+}
+```
+
+When the user submits `TaskForm`, React sends a `task.create` action. `applyAction`
+checks the patient association and then invokes:
+
+```typescript
+const task = selectTaskFactory(action.input.category).createTask(action.input);
+```
+
+The selected creator supplies its category and delegates common validation and
+construction. The resulting record has a unique ID, patient association, trimmed
+title/description, priority, optional due date, creation time, pending status and
+null completion time. It is saved through the same transaction path as other actions.
+
+**The selector and Factory Method play different roles.** `selectTaskFactory` is
+a simple factory function that chooses a creator. The subclass implementations of
+the shared `createTask` method are the Factory Method part. A plain function could
+select a category and return a task without any class hierarchy.
+
+We retained Factory Method to practice polymorphism and isolate category-specific
+creation behind a clear contract. A new category can receive its own creator;
+the category type and selector must also be extended. Consumers still invoke the
+same creation method. Shared construction avoids copying IDs, defaults and
+validation across subclasses.
+
+**The trade-off is deliberate:** today's concrete factories differ only by category,
+so the pattern adds files and indirection without a strong functional necessity.
+A single creation function would be sufficient for the current product. The
+implementation keeps the learning exercise without inventing medical behavior or
+adding unrelated patterns. Changing an existing task's category is an ordinary
+immutable update, not a reason to generate a new ID or recreate the task.
+
+## Testing strategy: what is tested and why
+
+We use several layers because each catches a different class of mistake.
+
+| Test layer                          | Tools and files                                                                                                                | What it verifies                                                                                                                                                                                                        | Why this layer / its limits                                                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Domain unit tests                   | Vitest: [`domain.test.ts`](src/logic/domain.test.ts), [`GeneralTaskFactory.test.ts`](src/factories/GeneralTaskFactory.test.ts) | Patient creation/editing, required fields, factories/selection, task defaults/edits/deletion, timestamps, reopening, observation validation, query filters/sorting, dashboard counts and activity/deletion behavior.    | Fast, focused feedback on business rules. Does not demonstrate that a real user can operate the interface.                                             |
+| Persistence and migration tests     | Vitest: [`persistence.test.ts`](src/storage/persistence.test.ts)                                                               | Serialization/restoration of entities, malformed JSON, unsupported schemas, invalid associations/dates/duplicates, unavailable storage, stale revisions, legacy checkbox/task migration and retention of original keys. | Targets data-loss risks directly. Browser storage is simulated, so real-browser coverage is still needed.                                              |
+| React interaction/integration tests | Testing Library + user-event + jsdom: [`App.test.tsx`](src/App.test.tsx)                                                       | Patient → task → editing → completion → observation → activity → remount, visible save failures, retained form input, duplicate submission, confirmation/cancellation and no-results states.                            | Tests components, domain operations and persistence together through user-facing controls. jsdom has no real modal top layer or layout.                |
+| Production end-to-end tests         | Playwright + installed Chrome: [`workflow.spec.ts`](e2e/workflow.spec.ts)                                                      | Full create/edit/complete/reopen journey, counts, task details, all main navigation, refresh persistence, deletion, Escape, focus containment/return and page overflow at desktop/mobile widths.                        | Exercises the actual built bundle and native browser behavior. Mobile uses an emulated viewport/touch environment, not a physical device.              |
+| Browser reliability tests           | Playwright: [`reliability.spec.ts`](e2e/reliability.spec.ts)                                                                   | Disconnected saves in an already-loaded app, actual localStorage migration, recovery-file download, dashboard filter shortcuts, patient edits, observation removal and stale second-tab protection.                     | Verifies integration with browser capabilities that mocks alone cannot establish. Does not promise offline reload or eliminate simultaneous-tab races. |
+| Automated accessibility tests       | axe through Playwright: [`accessibility.spec.ts`](e2e/accessibility.spec.ts)                                                   | Representative main views and dialogs scanned for WCAG A/AA rules, including names, labels and text contrast. Keyboard assertions also run in workflow tests.                                                           | Catches repeatable issues early. A passing scan is not accessibility certification or a screen-reader usability assessment.                            |
+| Static and build checks             | TypeScript, ESLint, Prettier, Vite                                                                                             | Type contracts, hook rules, common code mistakes, formatting and production bundling.                                                                                                                                   | Useful engineering checks, but compilation and formatting do not prove correct behavior.                                                               |
+
+Unit tests exercise both valid and invalid inputs, and use a controlled clock for
+completion timestamps. Storage failures are deliberately injected to confirm that
+failed writes never produce successful UI updates. Migration fixtures include tasks
+from before category/priority/due fields existed. These cases target realistic
+regressions rather than simply repeating implementation details in assertions.
+
+Testing Library uses accessible roles and labels so tests follow the same controls
+users encounter. Native-dialog focus and visual overflow are checked in Chrome,
+not inferred from jsdom. Browser tests use a fresh isolated context per test and
+never access the user's existing browser profile or real saved data.
+
+Run the checks in this order:
+
+```bash
+npm test
+npm run typecheck
+npm run lint
+npm run format:check
+npm run build
+npm run test:e2e
+```
+
+### Verification completed for this implementation
+
+- Vitest: **54 tests passed** across domain, persistence and React interaction tests.
+- Playwright: **18 tests passed** across desktop and mobile Chrome projects,
+  including automated accessibility scans of main views and dialogs.
+- Strict TypeScript, ESLint, Prettier and the production build all passed.
+
+These results describe the checks actually executed for this implementation, not a
+promise that future edits or different browser environments will pass automatically.
+
+Current scope does not include a backend API, authentication, clinical algorithms,
+load testing, penetration testing, cross-browser certification or regulatory
+validation. Those capabilities must not be inferred from a green test suite.
 
 ## Persistence, migration and recovery
 

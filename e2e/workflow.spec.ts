@@ -144,7 +144,7 @@ test("complete fictional care workflow persists across refresh", async ({
     "Observations",
     "Activity",
     "Overview",
-  ]) {
+  ] as const) {
     await page
       .getByRole("navigation", { name: "Main navigation" })
       .getByRole("link", { name, exact: true })
