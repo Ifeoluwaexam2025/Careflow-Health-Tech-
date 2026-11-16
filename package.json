@@ -9,8 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit",
-    "lint": "eslint .",
+    "typecheck": "tsc --noEmit && node -e \"console.log('TypeScript check passed.')\"",
+    "lint": "eslint . --max-warnings=0 && node -e \"console.log('Lint check passed.')\"",
     "test:e2e": "playwright test",
     "format": "prettier --write src e2e docs *.ts *.js *.md index.html package.json",
     "format:check": "prettier --check src e2e docs *.ts *.js *.md index.html package.json"

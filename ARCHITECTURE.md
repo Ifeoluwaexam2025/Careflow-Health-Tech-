@@ -76,8 +76,12 @@ flowchart LR
 - `App` composes views and selects dialogs; it does not construct or persist records.
 - `useCareFlow` coordinates synchronous read/modify/save/state operations. A ref
   retains the latest committed dataset between rapid event callbacks.
-- `applyAction` is the domain transaction boundary: it chooses an operation and
-  appends the corresponding actual activity event. It does not render or access storage.
+- `applyAction` combines an operation's result with exactly one actual activity event.
+  It does not render or access storage.
+- `getActionChange` dispatches by action type without implementing operations.
+- `logic/actions/` contains one named handler per operation. Each returns an explicit
+  `ActionChange`: updated data, affected patient/entity IDs and feedback text.
+  Handlers reuse the existing domain functions instead of duplicating validation.
 - Domain functions validate inputs and return new records/collections.
 - `useFormSubmit` prevents repeated submissions with a ref, supplies pending/error
   states, and unlocks after a failure so users can retry without losing input.

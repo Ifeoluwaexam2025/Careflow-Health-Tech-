@@ -69,7 +69,8 @@ orphans; confirmation describes that policy before any data changes.
 `TaskFactory` says every creator must implement `createTask(input): Task`.
 `GeneralTaskFactory` and `ObservationTaskFactory` supply different categories while
 sharing `createTask` record construction and `validateTask` input checks.
-`selectTaskFactory` picks a creator, and `applyAction` invokes its creation method.
+`selectTaskFactory` picks a creator, and the `applyTaskCreate` handler invokes its
+creation method. `getActionChange` dispatches actions; `applyAction` adds the event.
 
 The selector is a simple factory function; the subclass creation contract is the
 Factory Method design. Today the category is the only difference, so the classes
@@ -269,3 +270,37 @@ The original toggle regression is now covered through domain, storage, React and
 browser tests for the active state/persistence path. `TaskForm` replaces the old
 AddTaskModal and supports both creation and editing. All active styles are in
 `src/styles.css`, which `src/main.tsx` imports.
+
+## Action-handler refinement
+
+The original `applyAction` had one named function but combined nine operation paths.
+It now has one responsibility: append the real activity event to an operation result.
+`getActionChange` selects the handler; each handler performs only its named operation.
+Existing lower-level creation/update/validation functions remain shared.
+
+`ActionChange` makes each handler's result explicit. `Extract<Action, { type: ... }>`
+selects one variant of the action union, so a task-update handler cannot accidentally
+receive a patient-create payload. This is compile-time narrowing, not runtime JSON
+validation. `getActionChange` narrows the union through its switch before delegation.
+
+| Action | File                                                                                          | Purpose                                                                     |
+| ------ | --------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| MODIFY | [src/logic/applyAction.ts](../src/logic/applyAction.ts)                                       | Append one activity event and return the final result                       |
+| CREATE | [src/logic/getActionChange.ts](../src/logic/getActionChange.ts)                               | Dispatch to the matching operation handler                                  |
+| CREATE | [src/types/ActionChange.ts](../src/types/ActionChange.ts)                                     | Define the shared handler result                                            |
+| CREATE | [src/logic/actions.test.ts](../src/logic/actions.test.ts)                                     | Verify complete action lifecycles, event counts and missing-target failures |
+| MODIFY | [package.json](../package.json)                                                               | Print explicit successful-check messages; fail lint on warnings             |
+| CREATE | [src/logic/actions/applyObservationCreate.ts](../src/logic/actions/applyObservationCreate.ts) | Apply the single operation named by this handler                            |
+| CREATE | [src/logic/actions/applyObservationDelete.ts](../src/logic/actions/applyObservationDelete.ts) | Apply the single operation named by this handler                            |
+| CREATE | [src/logic/actions/applyPatientCreate.ts](../src/logic/actions/applyPatientCreate.ts)         | Apply the single operation named by this handler                            |
+| CREATE | [src/logic/actions/applyPatientDelete.ts](../src/logic/actions/applyPatientDelete.ts)         | Apply the single operation named by this handler                            |
+| CREATE | [src/logic/actions/applyPatientUpdate.ts](../src/logic/actions/applyPatientUpdate.ts)         | Apply the single operation named by this handler                            |
+| CREATE | [src/logic/actions/applyTaskCreate.ts](../src/logic/actions/applyTaskCreate.ts)               | Apply the single operation named by this handler                            |
+| CREATE | [src/logic/actions/applyTaskDelete.ts](../src/logic/actions/applyTaskDelete.ts)               | Apply the single operation named by this handler                            |
+| CREATE | [src/logic/actions/applyTaskToggle.ts](../src/logic/actions/applyTaskToggle.ts)               | Apply the single operation named by this handler                            |
+| CREATE | [src/logic/actions/applyTaskUpdate.ts](../src/logic/actions/applyTaskUpdate.ts)               | Apply the single operation named by this handler                            |
+
+Practice: follow a `task.update` action through the dispatcher and handler. Explain
+why the handler does not write storage or append its own activity event.
+
+Suggested commit: `refactor: extract action handlers and clarify quality-check output`

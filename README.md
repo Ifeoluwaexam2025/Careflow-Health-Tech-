@@ -120,7 +120,8 @@ Controlled form → typed action → useCareFlow → applyAction
 
 A controlled input stores its value in React state. The submitted `Action` is a
 TypeScript discriminated union: its `type` determines the fields that operation
-requires. `applyAction` constructs the next dataset without changing the old one.
+requires. `getActionChange` routes the action to one operation handler, which constructs
+the next dataset without changing the old one. `applyAction` appends its activity event.
 The hook saves first and accepts that dataset only after success. Ref-based form
 locking prevents rapid duplicate submissions before React has re-rendered.
 
@@ -153,8 +154,9 @@ export class ObservationTaskFactory extends TaskFactory {
 }
 ```
 
-When the user submits `TaskForm`, React sends a `task.create` action. `applyAction`
-checks the patient association and then invokes:
+When the user submits `TaskForm`, React sends a `task.create` action. `applyAction` delegates
+through `getActionChange` to `applyTaskCreate`, which checks the patient association
+and then invokes:
 
 ```typescript
 const task = selectTaskFactory(action.input.category).createTask(action.input);
@@ -187,15 +189,15 @@ immutable update, not a reason to generate a new ID or recreate the task.
 
 We use several layers because each catches a different class of mistake.
 
-| Test layer                          | Tools and files                                                                                                                | What it verifies                                                                                                                                                                                                        | Why this layer / its limits                                                                                                                            |
-| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Domain unit tests                   | Vitest: [`domain.test.ts`](src/logic/domain.test.ts), [`GeneralTaskFactory.test.ts`](src/factories/GeneralTaskFactory.test.ts) | Patient creation/editing, required fields, factories/selection, task defaults/edits/deletion, timestamps, reopening, observation validation, query filters/sorting, dashboard counts and activity/deletion behavior.    | Fast, focused feedback on business rules. Does not demonstrate that a real user can operate the interface.                                             |
-| Persistence and migration tests     | Vitest: [`persistence.test.ts`](src/storage/persistence.test.ts)                                                               | Serialization/restoration of entities, malformed JSON, unsupported schemas, invalid associations/dates/duplicates, unavailable storage, stale revisions, legacy checkbox/task migration and retention of original keys. | Targets data-loss risks directly. Browser storage is simulated, so real-browser coverage is still needed.                                              |
-| React interaction/integration tests | Testing Library + user-event + jsdom: [`App.test.tsx`](src/App.test.tsx)                                                       | Patient → task → editing → completion → observation → activity → remount, visible save failures, retained form input, duplicate submission, confirmation/cancellation and no-results states.                            | Tests components, domain operations and persistence together through user-facing controls. jsdom has no real modal top layer or layout.                |
-| Production end-to-end tests         | Playwright + installed Chrome: [`workflow.spec.ts`](e2e/workflow.spec.ts)                                                      | Full create/edit/complete/reopen journey, counts, task details, all main navigation, refresh persistence, deletion, Escape, focus containment/return and page overflow at desktop/mobile widths.                        | Exercises the actual built bundle and native browser behavior. Mobile uses an emulated viewport/touch environment, not a physical device.              |
-| Browser reliability tests           | Playwright: [`reliability.spec.ts`](e2e/reliability.spec.ts)                                                                   | Disconnected saves in an already-loaded app, actual localStorage migration, recovery-file download, dashboard filter shortcuts, patient edits, observation removal and stale second-tab protection.                     | Verifies integration with browser capabilities that mocks alone cannot establish. Does not promise offline reload or eliminate simultaneous-tab races. |
-| Automated accessibility tests       | axe through Playwright: [`accessibility.spec.ts`](e2e/accessibility.spec.ts)                                                   | Representative main views and dialogs scanned for WCAG A/AA rules, including names, labels and text contrast. Keyboard assertions also run in workflow tests.                                                           | Catches repeatable issues early. A passing scan is not accessibility certification or a screen-reader usability assessment.                            |
-| Static and build checks             | TypeScript, ESLint, Prettier, Vite                                                                                             | Type contracts, hook rules, common code mistakes, formatting and production bundling.                                                                                                                                   | Useful engineering checks, but compilation and formatting do not prove correct behavior.                                                               |
+| Test layer                          | Tools and files                                                                                                                                                                | What it verifies                                                                                                                                                                                                        | Why this layer / its limits                                                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Domain unit tests                   | Vitest: [`domain.test.ts`](src/logic/domain.test.ts), [`actions.test.ts`](src/logic/actions.test.ts), [`GeneralTaskFactory.test.ts`](src/factories/GeneralTaskFactory.test.ts) | Patient creation/editing, required fields, factories/selection, task defaults/edits/deletion, timestamps, reopening, observation validation, query filters/sorting, dashboard counts and activity/deletion behavior.    | Fast, focused feedback on business rules. Does not demonstrate that a real user can operate the interface.                                             |
+| Persistence and migration tests     | Vitest: [`persistence.test.ts`](src/storage/persistence.test.ts)                                                                                                               | Serialization/restoration of entities, malformed JSON, unsupported schemas, invalid associations/dates/duplicates, unavailable storage, stale revisions, legacy checkbox/task migration and retention of original keys. | Targets data-loss risks directly. Browser storage is simulated, so real-browser coverage is still needed.                                              |
+| React interaction/integration tests | Testing Library + user-event + jsdom: [`App.test.tsx`](src/App.test.tsx)                                                                                                       | Patient → task → editing → completion → observation → activity → remount, visible save failures, retained form input, duplicate submission, confirmation/cancellation and no-results states.                            | Tests components, domain operations and persistence together through user-facing controls. jsdom has no real modal top layer or layout.                |
+| Production end-to-end tests         | Playwright + installed Chrome: [`workflow.spec.ts`](e2e/workflow.spec.ts)                                                                                                      | Full create/edit/complete/reopen journey, counts, task details, all main navigation, refresh persistence, deletion, Escape, focus containment/return and page overflow at desktop/mobile widths.                        | Exercises the actual built bundle and native browser behavior. Mobile uses an emulated viewport/touch environment, not a physical device.              |
+| Browser reliability tests           | Playwright: [`reliability.spec.ts`](e2e/reliability.spec.ts)                                                                                                                   | Disconnected saves in an already-loaded app, actual localStorage migration, recovery-file download, dashboard filter shortcuts, patient edits, observation removal and stale second-tab protection.                     | Verifies integration with browser capabilities that mocks alone cannot establish. Does not promise offline reload or eliminate simultaneous-tab races. |
+| Automated accessibility tests       | axe through Playwright: [`accessibility.spec.ts`](e2e/accessibility.spec.ts)                                                                                                   | Representative main views and dialogs scanned for WCAG A/AA rules, including names, labels and text contrast. Keyboard assertions also run in workflow tests.                                                           | Catches repeatable issues early. A passing scan is not accessibility certification or a screen-reader usability assessment.                            |
+| Static and build checks             | TypeScript, ESLint, Prettier, Vite                                                                                                                                             | Type contracts, hook rules, common code mistakes, formatting and production bundling.                                                                                                                                   | Useful engineering checks, but compilation and formatting do not prove correct behavior.                                                               |
 
 Unit tests exercise both valid and invalid inputs, and use a controlled clock for
 completion timestamps. Storage failures are deliberately injected to confirm that
@@ -207,6 +209,12 @@ Testing Library uses accessible roles and labels so tests follow the same contro
 users encounter. Native-dialog focus and visual overflow are checked in Chrome,
 not inferred from jsdom. Browser tests use a fresh isolated context per test and
 never access the user's existing browser profile or real saved data.
+
+TypeScript and ESLint normally produce no diagnostics on success. The npm scripts
+now print `TypeScript check passed.` or `Lint check passed.` when their underlying
+command exits successfully. Lint treats warnings as failures. A deliberate temporary
+type mismatch and unused variable were used to verify both tools reject bad code;
+the diagnostic file was removed afterward.
 
 Run the checks in this order:
 
@@ -221,7 +229,7 @@ npm run test:e2e
 
 ### Verification completed for this implementation
 
-- Vitest: **54 tests passed** across domain, persistence and React interaction tests.
+- Vitest: **62 tests passed** across domain, persistence and React interaction tests.
 - Playwright: **18 tests passed** across desktop and mobile Chrome projects,
   including automated accessibility scans of main views and dialogs.
 - Strict TypeScript, ESLint, Prettier and the production build all passed.
